@@ -81,6 +81,54 @@ sock_error: // Release resources when socket failed
     exit(1);
 }
 
+int init_mc_sock()
+{
+    int sockfd;
+
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd < 0) {
+        errmsg("Unable to create multicast socket: %s\n", strerror(errno));
+        exit(1);
+    }
+    infomsg("Multicast socket created successfully\n");
+
+    struct sockaddr_in addr;
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons(MC_PORT);
+
+    // Reuse the socket addr
+    int yes = 1;
+    if (setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes)) == -1) {
+        errmsg("Unable to set socket option: %s\n", strerror(errno));
+        goto sock_error;
+    }
+
+    // setup multicast
+    struct ip_mreq mreq;
+    mreq.imr_multiaddr.s_addr = inet_addr(MC_GROUP);
+    mreq.imr_interface.s_addr = htonl(INADDR_ANY);
+    if (setsockopt(
+            sockfd, IPPROTO_IP, IP_ADD_MEMBERSHIP, &mreq, sizeof(mreq)) < 0) {
+        errmsg("Unable to setup multicast socket: %s\n", strerror(errno));
+        goto sock_error;
+    }
+
+    if (bind(sockfd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        errmsg("Error: Unable to bind multicast socket: %s\n", strerror(errno));
+        goto sock_error;
+    }
+    infomsg("Multicast socket successfully binded\n");
+
+    putchar('\n');
+
+    return sockfd;
+
+sock_error: // Release resources when socket failed
+    close(sockfd);
+    exit(1);
+}
+
 int init_session(struct session *s, struct sockaddr_in addr)
 {
     memset(s, 0, sizeof(*s));

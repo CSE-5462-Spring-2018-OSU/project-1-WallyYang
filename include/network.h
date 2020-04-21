@@ -12,6 +12,9 @@
 #include "list.h"
 #include "game.h"
 
+#define MC_PORT  1818
+#define MC_GROUP "239.0.0.1"
+
 extern const int VERSION;
 
 extern const int BUFSZ;
@@ -63,6 +66,12 @@ enum Code
  * Exit the program if there's error, not recoverable
  */
 int init_socket(int argc, char *argv[]);
+
+/**
+ * Create the multicast socket
+ * Exit the program if there's error, not recoverable
+ */
+int init_mc_sock();
 
 /**
  * Initialize the session struct @s to current available game id and

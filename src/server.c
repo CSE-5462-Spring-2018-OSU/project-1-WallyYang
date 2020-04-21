@@ -51,6 +51,8 @@ int main(int argc, char *argv[])
     sigaction(SIGINT, &sigint_handler, NULL);
 
     int sockfd = init_socket(argc, argv);
+    int mcfd = init_mc_sock();
+
     log_file = fopen("server.log", "a");
     if (!log_file) {
         goto error;
@@ -67,6 +69,13 @@ int main(int argc, char *argv[])
         socklen_t addr_len = sizeof(addr);
         struct message msg;
         char buf[addr_len];
+
+        char buffer[50];
+        rc = recvfrom(mcfd, buffer, sizeof(buffer), 0,
+                      (struct sockaddr *)&addr, &addr_len);
+        if (rc > 0) {
+            printf("received: %s\n", buffer);
+        }
 
         tee(log_file, "\n");
         rc = recvmsg_from(sockfd, &addr, &addr_len, &msg);
