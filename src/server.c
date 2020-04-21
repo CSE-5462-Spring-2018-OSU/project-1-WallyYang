@@ -11,6 +11,7 @@
 #include <stdint.h>
 #include <time.h>
 
+#include <poll.h>
 #include <errno.h>
 #include <signal.h>
 #include <unistd.h>
@@ -53,6 +54,12 @@ int main(int argc, char *argv[])
     int sockfd = init_socket(argc, argv);
     int mcfd = init_mc_sock();
 
+    struct pollfd pfds[2];
+    pfds[0].fd = sockfd;
+    pfds[0].events = POLLIN;
+    pfds[1].fd = mcfd;
+    pfds[1].events = POLLIN;
+
     log_file = fopen("server.log", "a");
     if (!log_file) {
         goto error;
@@ -64,168 +71,200 @@ int main(int argc, char *argv[])
 
     do {
         // server running
-
-        struct sockaddr_in addr;
-        socklen_t addr_len = sizeof(addr);
-        struct message msg;
-        char buf[addr_len];
-
-        char buffer[50];
-        rc = recvfrom(mcfd, buffer, sizeof(buffer), 0,
-                      (struct sockaddr *)&addr, &addr_len);
-        if (rc > 0) {
-            printf("received: %s\n", buffer);
-        }
-
-        tee(log_file, "\n");
-        rc = recvmsg_from(sockfd, &addr, &addr_len, &msg);
-        if (rc < 0) {
-            errmsg("Unable to receive message, retry: %s\n", strerror(errno));
+        int poll_count = poll(pfds, 2, 10000);
+        if (poll_count < 0) {
+            errmsg("Error, poll failed: %s\n", strerror(errno));
+            goto error;
+        } else if (poll_count == 0) {
             continue;
         }
 
-        if (msg.cmd == NGAME) { // new game request
-            infomsg("NEW GAME request from %s:%u\n",
-                    inet_ntop(AF_INET, &addr.sin_addr, buf, addr_len),
-                    addr.sin_port);
+        if (pfds[0].revents & POLLIN) {
+            // check if current sessions has incoming message
+            struct sockaddr_in addr;
+            socklen_t addr_len = sizeof(addr);
+            struct message msg;
+            char buf[addr_len];
 
-            bool found = false;
-            struct session *pos;
-            list_for_each_entry(pos, &list_session, list) {
-                if (equal_addr(pos->client, addr)) {
-                    found = true;
-                    break;
-                }
-            }
-
-            if (found) {
-                errmsg("Existing client sent new game request, rejecting\n");
-                rc = send_move(sockfd, pos, 0, EBUSYGAME);
-                if (rc <= 0) {
-                  errmsg("Unable to send response message: %s\n",
-                         strerror(errno));
-                }
-                continue;
-            }
-
-            struct session *sess = malloc(sizeof(struct session));
-            rc = init_session(sess, addr);
+            tee(log_file, "\n");
+            rc = recvmsg_from(sockfd, &addr, &addr_len, &msg);
             if (rc < 0) {
-                errmsg("Server at full load, send busy response code\n");
-                rc = send_move(sockfd, sess, 0, EBUSYGAME);
-                if (rc <= 0) {
-                    errmsg("Unable to send response message: %s\n",
-                           strerror(errno));
+                errmsg("Unable to receive message, retry: %s\n", strerror(errno));
+                continue;
+            }
+
+            if (msg.cmd == NGAME) { // new game request
+                infomsg("NEW GAME request from %s:%u\n",
+                        inet_ntop(AF_INET, &addr.sin_addr, buf, addr_len),
+                        addr.sin_port);
+
+                bool found = false;
+                struct session *pos;
+                list_for_each_entry(pos, &list_session, list) {
+                    if (equal_addr(pos->client, addr)) {
+                        found = true;
+                        break;
+                    }
                 }
-                continue;
-            }
 
-            int move = gen_move(sess->board);
-            play_move(1, move, sess->board);
-            print_board(sess->board, log_file);
-
-            infomsg("Assigned game ID %d to client %s:%u\n",
-                    sess->game_id,
-                    inet_ntop(AF_INET, &addr.sin_addr, buf, addr_len),
-                    addr.sin_port);
-            rc = send_move(sockfd, sess, move, SUCC);
-            if (rc <= 0) {
-                errmsg("Unable to send initial message: %s\n", strerror(errno));
-                continue;
-            }
-
-            INIT_LIST_HEAD(&sess->list);
-            list_add(&sess->list, &list_session);
-            infomsg("Added session to the current list\n");
-
-            continue;
-        }
-
-        struct session *sess = NULL;
-        list_for_each_entry(sess, &list_session, list) {
-            if (equal_addr(addr, sess->client)) {
-                infomsg("New message from current session\n");
-
-                // check for game ID
-                if (msg.game != sess->game_id) {
-                    errmsg("Received mismatched game ID, expected %d, got %d\n",
-                           sess->game_id, msg.game);
-                    rc = send_move(sockfd, sess, 0, EGIDWRONG);
+                if (found) {
+                    errmsg("Existing client sent new game request, rejecting\n");
+                    rc = send_move(sockfd, pos, 0, EBUSYGAME);
                     if (rc <= 0) {
                         errmsg("Unable to send response message: %s\n",
                                strerror(errno));
                     }
-                    break;
+                    goto mc;
                 }
 
-                if (msg.resp != SUCC
-                    && msg.resp != GAMEOVR
-                    && msg.resp != GAMOVRACK) {
-
-                    // error not able to handle
-                    break;
-                }
-
-                int winner = 0;
-
-                set_style(stdout, "\033[2J\033[H");
-                fflush(stdout);
-
-                if (play_move(2, msg.move, sess->board)) {
-                    winner = checkwin(sess->board);
-                    print_board(sess->board, log_file);
-                } else {
-                    errmsg("Received invalid move, send back response\n");
-                    rc = send_move(sockfd, sess, 0, EINVMOVE);
+                struct session *sess = malloc(sizeof(struct session));
+                rc = init_session(sess, addr);
+                if (rc < 0) {
+                    errmsg("Server at full load, send busy response code\n");
+                    rc = send_move(sockfd, sess, 0, EBUSYGAME);
                     if (rc <= 0) {
                         errmsg("Unable to send response message: %s\n",
                                strerror(errno));
                     }
-                    break;
-                }
-
-                ++(sess->turn);
-
-                if (winner != 0) {
-                    infomsg("Server lost\n");
-                    // send acknowledge
-                    rc = send_move(sockfd, sess, 0, GAMOVRACK);
-
-                    // remove session from the list
-                    list_del(&sess->list);
-                    free_session(sess);
-                    break;
+                    goto mc;
                 }
 
                 int move = gen_move(sess->board);
                 play_move(1, move, sess->board);
-                ++(sess->turn);
-
-                winner = checkwin(sess->board);
                 print_board(sess->board, log_file);
 
-                if (winner == 0) {
-                    infomsg("Sending move to client\n");
-                    rc = send_move(sockfd, sess, move, SUCC);
-                    if (rc <= 0) {
-                        errmsg("Failed to send message to client: %s\n",
-                               strerror(errno));
-                    }
-                } else {
-                    infomsg("Sending move with winning message\n");
-                    rc = send_move(sockfd, sess, move, GAMEOVR);
-                    if (rc <= 0) {
-                        errmsg("Failed to send message to client: %s\n",
-                               strerror(errno));
+                infomsg("Assigned game ID %d to client %s:%u\n",
+                        sess->game_id,
+                        inet_ntop(AF_INET, &addr.sin_addr, buf, addr_len),
+                        addr.sin_port);
+                rc = send_move(sockfd, sess, move, SUCC);
+                if (rc <= 0) {
+                    errmsg("Unable to send initial message: %s\n", strerror(errno));
+                    goto mc;
+                }
+
+                INIT_LIST_HEAD(&sess->list);
+                list_add(&sess->list, &list_session);
+                infomsg("Added session to the current list\n");
+
+                continue;
+            }
+
+            struct session *sess = NULL;
+            list_for_each_entry(sess, &list_session, list) {
+                if (equal_addr(addr, sess->client)) {
+                    infomsg("New message from current session\n");
+
+                    // check for game ID
+                    if (msg.game != sess->game_id) {
+                        errmsg("Received mismatched game ID, expected %d, got %d\n",
+                               sess->game_id, msg.game);
+                        rc = send_move(sockfd, sess, 0, EGIDWRONG);
+                        if (rc <= 0) {
+                            errmsg("Unable to send response message: %s\n",
+                                   strerror(errno));
+                        }
+                        break;
                     }
 
-                    // remove session from the list
-                    list_del(&sess->list);
-                    free_session(sess);
-                    break;
+                    if (msg.resp != SUCC
+                        && msg.resp != GAMEOVR
+                        && msg.resp != GAMOVRACK) {
+
+                        // error not able to handle
+                        break;
+                    }
+
+                    int winner = 0;
+
+                    set_style(stdout, "\033[2J\033[H");
+                    fflush(stdout);
+
+                    if (play_move(2, msg.move, sess->board)) {
+                        winner = checkwin(sess->board);
+                        print_board(sess->board, log_file);
+                    } else {
+                        errmsg("Received invalid move, send back response\n");
+                        rc = send_move(sockfd, sess, 0, EINVMOVE);
+                        if (rc <= 0) {
+                            errmsg("Unable to send response message: %s\n",
+                                   strerror(errno));
+                        }
+                        break;
+                    }
+
+                    ++(sess->turn);
+
+                    if (winner != 0) {
+                        infomsg("Server lost\n");
+                        // send acknowledge
+                        rc = send_move(sockfd, sess, 0, GAMOVRACK);
+
+                        // remove session from the list
+                        list_del(&sess->list);
+                        free_session(sess);
+                        break;
+                    }
+
+                    int move = gen_move(sess->board);
+                    play_move(1, move, sess->board);
+                    ++(sess->turn);
+
+                    winner = checkwin(sess->board);
+                    print_board(sess->board, log_file);
+
+                    if (winner == 0) {
+                        infomsg("Sending move to client\n");
+                        rc = send_move(sockfd, sess, move, SUCC);
+                        if (rc <= 0) {
+                            errmsg("Failed to send message to client: %s\n",
+                                   strerror(errno));
+                        }
+                    } else {
+                        infomsg("Sending move with winning message\n");
+                        rc = send_move(sockfd, sess, move, GAMEOVR);
+                        if (rc <= 0) {
+                            errmsg("Failed to send message to client: %s\n",
+                                   strerror(errno));
+                        }
+
+                        // remove session from the list
+                        list_del(&sess->list);
+                        free_session(sess);
+                        break;
+                    }
                 }
             }
         }
+
+    mc:
+        if (pfds[1].revents & POLLIN) {
+            // check multicast incoming message
+            struct sockaddr_in addr;
+            socklen_t addr_len = sizeof(addr);
+            char buffer[50];
+
+            rc = recvfrom(mcfd, buffer, sizeof(buffer), 0,
+                          (struct sockaddr *)&addr,
+                          &addr_len);
+
+            // resume game request
+            infomsg("RESUME GAME request from %s:%u\n",
+                    inet_ntop(AF_INET, &addr.sin_addr, buf, addr_len),
+                    addr.sin_port);
+            struct session *sess = malloc(sizeof(struct session));
+            rc = init_session(sess, addr);
+            if (rc < 0) {
+                errmsg("Server at full load, ignore request\n");
+                continue;
+            }
+
+            if (rc > 0) {
+                printf("received: %s\n", buffer);
+            }
+
+        }
+
     } while (!sigint);
 
     infomsg("Server stopped, clean up resources and exit\n");
