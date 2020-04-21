@@ -1,13 +1,13 @@
-# CSE 5462 Lab 5
+# CSE 5462 Project
 
 ## Description
 
-This is the server part of the Client/Server Tic-Tac-Toe game. Protocol version 2
+This is the server part of the Client/Server Tic-Tac-Toe game. Protocol version 4
 
 ## Build Environment
 
- - Kernel: x86_64 Linux 5.5.5-arch1-1
- - Compiler: gcc (GCC) 9.2.1 20200130
+ - Kernel: x86_64 Linux 5.6.4-arch1-1
+ - Compiler: gcc (Arch Linux 9.3.0-1) 9.3.0
 
 ## Build
 
