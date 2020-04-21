@@ -37,6 +37,7 @@ struct message
     uint8_t move;    // the number of the square moving to
     uint8_t turn;    // sequence number representing the turn, start with 0
     uint8_t game;    // unique identifer for game
+    char board[NROWS * NCOLS];  // board for a resume game request
 };
 
 // Connection Command codes
@@ -44,6 +45,8 @@ enum Cmd
 {
     MOVE  = 0,
     NGAME = 1, // new game request
+    RGAME = 2, // resume game request
+    NSERV = 3, // new server request
 };
 
 // Response code defined in the protocol
@@ -58,6 +61,7 @@ enum Code
     ENOVERSION = 6, // incompatible version number
     EBUSYGAME  = 7, // server busy
     EGIDWRONG  = 8, // game ID mismatch
+    SPOTAVAIL  = 9, // server spot available for multicast
 };
 
 /**
@@ -78,6 +82,13 @@ int init_mc_sock();
  * proper sockaddr and game board
  */
 int init_session(struct session *s, struct sockaddr_in addr);
+
+/**
+ * Clone a session from a resume game request based on @msg,
+ * return the game number
+ */
+int clone_session(struct session *s, struct sockaddr_in addr,
+                  struct message msg);
 
 /**
  * Release game ID and memory of session @s

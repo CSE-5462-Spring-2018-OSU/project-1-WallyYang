@@ -148,6 +148,42 @@ int main(int argc, char *argv[])
                 infomsg("Added session to the current list\n");
 
                 continue;
+            } else if (msg.cmd == RGAME) {
+                // resume game request
+                infomsg("RESUME GAME request from %s:%u\n",
+                        inet_ntop(AF_INET, &addr.sin_addr, buf, addr_len),
+                        addr.sin_port);
+
+
+                if (rc < sizeof(msg)) {
+                    infomsg("Did not receive enough bytes\n");
+                    continue;
+                }
+
+                struct session *sess = malloc(sizeof(struct session));
+                rc = clone_session(sess, addr, msg);
+                if (rc < 0) {
+                    errmsg("Server at full load, ignore request\n");
+                    continue;
+                }
+
+                int move = gen_move(sess->board);
+                play_move(1, move, sess->board);
+                print_board(sess->board, log_file);
+
+                infomsg("Assigned game ID %d to client %s:%u\n", sess->game_id,
+                        inet_ntop(AF_INET, &addr.sin_addr, buf, addr_len),
+                        addr.sin_port);
+                rc = send_move(sockfd, sess, move, SPOTAVAIL);
+                if (rc <= 0) {
+                    errmsg("Unable to send initial message: %s\n", strerror(errno));
+                    goto mc;
+                }
+
+                INIT_LIST_HEAD(&sess->list);
+                list_add(&sess->list, &list_session);
+                infomsg("Added session to the current list\n");
+                continue;
             }
 
             struct session *sess = NULL;
@@ -242,27 +278,15 @@ int main(int argc, char *argv[])
             // check multicast incoming message
             struct sockaddr_in addr;
             socklen_t addr_len = sizeof(addr);
-            char buffer[50];
+            struct message msg;
 
-            rc = recvfrom(mcfd, buffer, sizeof(buffer), 0,
-                          (struct sockaddr *)&addr,
-                          &addr_len);
+            rc = recvmsg_from(mcfd, &addr, &addr_len, &msg);
 
-            // resume game request
-            infomsg("RESUME GAME request from %s:%u\n",
-                    inet_ntop(AF_INET, &addr.sin_addr, buf, addr_len),
-                    addr.sin_port);
-            struct session *sess = malloc(sizeof(struct session));
-            rc = init_session(sess, addr);
-            if (rc < 0) {
-                errmsg("Server at full load, ignore request\n");
-                continue;
-            }
+            memset(&msg, 0, sizeof(msg));
+            msg.version = VERSION;
+            msg.resp = SPOTAVAIL;
 
-            if (rc > 0) {
-                printf("received: %s\n", buffer);
-            }
-
+            rc = sendmsg_to(sockfd, addr, msg);
         }
 
     } while (!sigint);

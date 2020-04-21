@@ -1,3 +1,4 @@
+#include <netinet/in.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <string.h>
@@ -15,7 +16,7 @@
 #include "network.h"
 #include "game.h"
 
-const int VERSION = 2; // current protocol version
+const int VERSION = 4; // current protocol version
 
 const int BUFSZ = 100; // buffer size for all network package
 const int TIMEOUT = 60; // timeout after 1 minute
@@ -156,6 +157,47 @@ int init_session(struct session *s, struct sockaddr_in addr)
     return game_id;
 }
 
+int clone_session(struct session *s,
+                  struct sockaddr_in addr,
+                  struct message msg)
+{
+    memset(s, 0, sizeof(*s));
+
+    int game_id = -1;
+    if (curr_max_id < MAX_ID) {
+        game_id = curr_max_id;
+        used_id[curr_max_id] = true;
+        ++curr_max_id;
+    } else {
+        // loop to find a available ID
+        for (int i = 0; i < MAX_ID; ++i) {
+            if (!used_id[i]) {
+                game_id = i;
+                used_id[i] = true;
+            }
+        }
+    }
+
+    s->game_id = game_id;
+    s->client = addr;
+
+    int count = 0;
+    for (int i = 0; i < NROWS * NCOLS; ++i) {
+        if (msg.board[i] == 0) {
+            s->board[i] = '0' + i + 1;
+        } else if (msg.board[i] == 1) {
+            s->board[i] = 'X';
+            count++;
+        } else if (msg.board[i] == 2) {
+            s->board[i] = 'O';
+            count++;
+        }
+    }
+    s->turn = 0;
+
+    return game_id;
+}
+
 void free_session(struct session *s)
 {
     used_id[s->game_id] = false;
@@ -169,14 +211,14 @@ int sendmsg_to(int sockfd, struct sockaddr_in addr, struct message msg)
     char buf[sizeof(addr)];
 
     if (rc > 0) {
-      infomsg("Sent message to client %s:%u\n",
-              inet_ntop(AF_INET, &addr.sin_addr, buf, sizeof(addr)),
-              addr.sin_port);
+        infomsg("Sent message to client %s:%u\n",
+                inet_ntop(AF_INET, &addr.sin_addr, buf, sizeof(addr)),
+                addr.sin_port);
 
-      infomsg("Message content: version %d, command %d, "
-              "response code %d, move %d, turn %d game %d\n",
-              (int)msg.version, (int)msg.cmd, (int)msg.resp, (int)msg.move,
-              (int)msg.turn, (int)msg.game);
+        infomsg("Message content: version %d, command %d, "
+                "response code %d, move %d, turn %d game %d\n",
+                (int)msg.version, (int)msg.cmd, (int)msg.resp, (int)msg.move,
+                (int)msg.turn, (int)msg.game);
     }
 
     return rc;
@@ -190,13 +232,14 @@ int recvmsg_from(int sockfd, struct sockaddr_in *addr, socklen_t *len,
     char buf[*len];
 
     if (rc > 0) {
-      infomsg("Received incoming message from %s:%u\n",
-              inet_ntop(AF_INET, &addr->sin_addr, buf, *len), addr->sin_port);
+        infomsg("Received incoming message from %s:%u\n",
+                inet_ntop(AF_INET, &addr->sin_addr, buf, *len), addr->sin_port);
+        infomsg("Received %d bytes\n", rc);
 
-      infomsg("Message content: version %d, command %d, "
-              "response code %d, move %d, turn %d and game %d\n",
-              (int)msg->version, (int)msg->cmd, (int)msg->resp, (int)msg->move,
-              (int)msg->turn, (int)msg->game);
+        infomsg("Message content: version %d, command %d, "
+                "response code %d, move %d, turn %d and game %d\n",
+                (int)msg->version, (int)msg->cmd, (int)msg->resp, (int)msg->move,
+                (int)msg->turn, (int)msg->game);
     }
 
     return rc;
