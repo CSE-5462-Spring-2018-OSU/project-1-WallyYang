@@ -193,7 +193,7 @@ int clone_session(struct session *s,
             count++;
         }
     }
-    s->turn = 0;
+    s->turn = count;
 
     return game_id;
 }

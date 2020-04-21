@@ -174,7 +174,7 @@ int main(int argc, char *argv[])
                 infomsg("Assigned game ID %d to client %s:%u\n", sess->game_id,
                         inet_ntop(AF_INET, &addr.sin_addr, buf, addr_len),
                         addr.sin_port);
-                rc = send_move(sockfd, sess, move, SPOTAVAIL);
+                rc = send_move(sockfd, sess, move, SUCC);
                 if (rc <= 0) {
                     errmsg("Unable to send initial message: %s\n", strerror(errno));
                     goto mc;
