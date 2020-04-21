@@ -169,21 +169,38 @@ int main(int argc, char *argv[])
 
                 int move = gen_move(sess->board);
                 play_move(1, move, sess->board);
+
+                int winner = 0;
+                winner = checkwin(sess->board);
                 print_board(sess->board, log_file);
 
-                infomsg("Assigned game ID %d to client %s:%u\n", sess->game_id,
-                        inet_ntop(AF_INET, &addr.sin_addr, buf, addr_len),
-                        addr.sin_port);
-                rc = send_move(sockfd, sess, move, SUCC);
-                if (rc <= 0) {
-                    errmsg("Unable to send initial message: %s\n", strerror(errno));
+                if (winner == 0) {
+                    infomsg("Assigned game ID %d to client %s:%u\n",
+                            sess->game_id,
+                            inet_ntop(AF_INET, &addr.sin_addr, buf, addr_len),
+                            addr.sin_port);
+                    rc = send_move(sockfd, sess, move, SUCC);
+                    if (rc <= 0) {
+                        errmsg("Unable to send initial message: %s\n",
+                               strerror(errno));
+                        goto mc;
+                    }
+
+                    INIT_LIST_HEAD(&sess->list);
+                    list_add(&sess->list, &list_session);
+                    infomsg("Added session to the current list\n");
+                    goto mc;
+                } else {
+                    infomsg("Sending move with winning message\n");
+                    rc = send_move(sockfd, sess, move, GAMEOVR);
+                    if (rc <= 0) {
+                        errmsg("Failed to send message to client: %s\n",
+                               strerror(errno));
+                    }
+                    free_session(sess);
                     goto mc;
                 }
 
-                INIT_LIST_HEAD(&sess->list);
-                list_add(&sess->list, &list_session);
-                infomsg("Added session to the current list\n");
-                continue;
             }
 
             struct session *sess = NULL;
